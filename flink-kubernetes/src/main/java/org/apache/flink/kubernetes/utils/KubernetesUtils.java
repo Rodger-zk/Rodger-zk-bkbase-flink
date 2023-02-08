@@ -546,6 +546,11 @@ public class KubernetesUtils {
         return configuration.getBoolean(KubernetesConfigOptions.KUBERNETES_HOSTNETWORK_ENABLED);
     }
 
+    /** Checks if service is enabled. */
+    public static boolean isServiceEnabled(Configuration configuration) {
+        return configuration.getBoolean(KubernetesConfigOptions.KUBERNETES_SERVICE_ENABLED);
+    }
+
     /**
      * Creates a config map with the given name if it does not exist.
      *
