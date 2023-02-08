@@ -19,6 +19,7 @@
 package org.apache.flink.kubernetes.kubeclient;
 
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.kubernetes.configuration.KubernetesConfigOptions;
 import org.apache.flink.kubernetes.configuration.KubernetesLeaderElectionConfiguration;
 import org.apache.flink.kubernetes.kubeclient.decorators.ExternalServiceDecorator;
@@ -49,6 +50,7 @@ import io.fabric8.kubernetes.api.model.ServiceBuilder;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.NamespacedKubernetesClient;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,6 +77,9 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
 
     private final String clusterId;
     private final String namespace;
+    private final boolean isServiceEnabled;
+    private final int pollPodIpMaxRetry;
+    private final int restPort;
     private final int maxRetryAttempts;
     private final KubernetesConfigOptions.NodePortAddressType nodePortAddressType;
 
@@ -97,6 +102,11 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
                                                         "Configuration option '%s' is not set.",
                                                         KubernetesConfigOptions.CLUSTER_ID.key())));
         this.namespace = flinkConfig.getString(KubernetesConfigOptions.NAMESPACE);
+        this.isServiceEnabled =
+                flinkConfig.getBoolean(KubernetesConfigOptions.KUBERNETES_SERVICE_ENABLED);
+        this.pollPodIpMaxRetry =
+                flinkConfig.getInteger(KubernetesConfigOptions.KUBERNETES_POLL_POD_IP_MAX_RETRIES);
+        this.restPort = Integer.parseInt(flinkConfig.getString(RestOptions.BIND_PORT));
         this.maxRetryAttempts =
                 flinkConfig.getInteger(
                         KubernetesConfigOptions.KUBERNETES_TRANSACTIONAL_OPERATION_MAX_RETRIES);
@@ -172,8 +182,36 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
                 kubeClientExecutorService);
     }
 
+    private String getJobManagerPodIp(String clusterId) {
+        for (int retryAttempt = 0; retryAttempt < pollPodIpMaxRetry; retryAttempt++) {
+            List<KubernetesPod> podList =
+                    getPodsWithLabels(KubernetesUtils.getJobManagerSelectors(clusterId));
+            if (!podList.isEmpty()) {
+                String podIp = podList.get(0).getInternalResource().getStatus().getPodIP();
+                if (StringUtils.isNotBlank(podIp)) {
+                    return podIp;
+                }
+            }
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return null;
+    }
+
     @Override
     public Optional<Endpoint> getRestEndpoint(String clusterId) {
+        if (!isServiceEnabled) {
+            String address = getJobManagerPodIp(clusterId);
+            if (address == null) {
+                return Optional.empty();
+            } else {
+                return Optional.of(new Endpoint(address, restPort));
+            }
+        }
+
         Optional<KubernetesService> restService =
                 getService(ExternalServiceDecorator.getExternalServiceName(clusterId));
         if (!restService.isPresent()) {
