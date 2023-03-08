@@ -62,6 +62,12 @@ public class ParquetFileFormatFactory implements BulkReaderFormatFactory, BulkWr
                                     + " time and LocalDateTime. Hive 0.x/1.x/2.x use local timezone. But Hive 3.x"
                                     + " use UTC timezone");
 
+    public static final ConfigOption<Boolean> CASE_SENSITIVE =
+            key("case-sensitive")
+                    .booleanType()
+                    .defaultValue(true)
+                    .withDescription("Whether to enable case sensitive mode for parquet format");
+
     @Override
     public BulkDecodingFormat<RowData> createDecodingFormat(
             DynamicTableFactory.Context context, ReadableConfig formatOptions) {
@@ -135,7 +141,7 @@ public class ParquetFileFormatFactory implements BulkReaderFormatFactory, BulkWr
                     null,
                     VectorizedColumnBatch.DEFAULT_SIZE,
                     formatOptions.get(UTC_TIMEZONE),
-                    true);
+                    formatOptions.get(CASE_SENSITIVE));
         }
 
         @Override
