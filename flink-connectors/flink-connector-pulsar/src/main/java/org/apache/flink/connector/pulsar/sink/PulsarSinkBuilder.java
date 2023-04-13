@@ -32,6 +32,7 @@ import org.apache.flink.connector.pulsar.sink.writer.serializer.PulsarSchemaWrap
 import org.apache.flink.connector.pulsar.sink.writer.serializer.PulsarSerializationSchema;
 import org.apache.flink.connector.pulsar.sink.writer.topic.TopicMetadataListener;
 
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.AbstractFlinkStreamingCheckpointManager;
 import org.apache.pulsar.client.api.Schema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,11 +90,12 @@ import static org.apache.flink.util.Preconditions.checkState;
  *     .build();
  * }</pre>
  *
- * @see PulsarSink for a more detailed explanation of the different guarantees.
  * @param <IN> The input type of the sink.
+ * @see PulsarSink for a more detailed explanation of the different guarantees.
  */
 @PublicEvolving
 public class PulsarSinkBuilder<IN> {
+
     private static final Logger LOG = LoggerFactory.getLogger(PulsarSinkBuilder.class);
 
     private final PulsarConfigBuilder configBuilder;
@@ -103,6 +105,8 @@ public class PulsarSinkBuilder<IN> {
     private TopicRoutingMode topicRoutingMode;
     private TopicRouter<IN> topicRouter;
     private MessageDelayer<IN> messageDelayer;
+    private AbstractFlinkStreamingCheckpointManager checkpointManager;
+    private Boolean isOffset;
 
     // private builder constructor.
     PulsarSinkBuilder() {
@@ -205,6 +209,17 @@ public class PulsarSinkBuilder<IN> {
         }
         this.topicRoutingMode = TopicRoutingMode.CUSTOM;
         this.topicRouter = checkNotNull(topicRouter, "topicRouter");
+        return this;
+    }
+
+    public PulsarSinkBuilder<IN> setCheckpointManager(
+            AbstractFlinkStreamingCheckpointManager checkpointManager) {
+        this.checkpointManager = checkpointManager;
+        return this;
+    }
+
+    public PulsarSinkBuilder<IN> setOffset(Boolean offset) {
+        this.isOffset = offset;
         return this;
     }
 
@@ -359,7 +374,9 @@ public class PulsarSinkBuilder<IN> {
                 metadataListener,
                 topicRoutingMode,
                 topicRouter,
-                messageDelayer);
+                messageDelayer,
+                checkpointManager,
+                isOffset);
     }
 
     // ------------- private helpers  --------------

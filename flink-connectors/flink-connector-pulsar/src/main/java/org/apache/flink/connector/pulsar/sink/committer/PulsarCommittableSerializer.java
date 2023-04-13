@@ -20,6 +20,12 @@ package org.apache.flink.connector.pulsar.sink.committer;
 
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.type.TypeReference;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.CheckpointValue.OutputCheckpoint;
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.types.AbstractCheckpointKey;
 import org.apache.pulsar.client.api.transaction.TxnID;
 
 import java.io.ByteArrayInputStream;
@@ -27,11 +33,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 /** A serializer used to serialize {@link PulsarCommittable}. */
 public class PulsarCommittableSerializer implements SimpleVersionedSerializer<PulsarCommittable> {
 
     private static final int CURRENT_VERSION = 1;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public int getVersion() {
@@ -46,6 +55,7 @@ public class PulsarCommittableSerializer implements SimpleVersionedSerializer<Pu
             out.writeLong(txnID.getMostSigBits());
             out.writeLong(txnID.getLeastSigBits());
             out.writeUTF(obj.getTopic());
+            out.writeUTF(this.serializeCheckpointInfo(obj.getCheckpointInfo()));
             out.flush();
             return baos.toByteArray();
         }
@@ -59,7 +69,36 @@ public class PulsarCommittableSerializer implements SimpleVersionedSerializer<Pu
             long leastSigBits = in.readLong();
             TxnID txnID = new TxnID(mostSigBits, leastSigBits);
             String topic = in.readUTF();
-            return new PulsarCommittable(txnID, topic);
+            String checkpointStr = in.readUTF();
+            Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo =
+                    deserializeCheckpointInfo(checkpointStr);
+            return new PulsarCommittable(txnID, topic, checkpointInfo);
         }
+    }
+
+    private String serializeCheckpointInfo(
+            Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo)
+            throws JsonProcessingException {
+        Map<String, String> checkpointInfoStr = new HashMap<>();
+        checkpointInfo.forEach(
+                (key, value) -> {
+                    checkpointInfoStr.put(key.toString(), value.toDbValue());
+                });
+        return objectMapper.writeValueAsString(checkpointInfoStr);
+    }
+
+    private Map<AbstractCheckpointKey, OutputCheckpoint> deserializeCheckpointInfo(
+            String checkpointStr) throws JsonProcessingException {
+        Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo = new HashMap<>();
+        HashMap<String, String> checkpointInfoStr =
+                objectMapper.readValue(
+                        checkpointStr, new TypeReference<HashMap<String, String>>() {});
+        checkpointInfoStr.forEach(
+                (keyStr, valueStr) -> {
+                    AbstractCheckpointKey checkpointKey = AbstractCheckpointKey.fromString(keyStr);
+                    OutputCheckpoint outputCheckpoint = OutputCheckpoint.buildFromDbStr(valueStr);
+                    checkpointInfo.put(checkpointKey, outputCheckpoint);
+                });
+        return checkpointInfo;
     }
 }

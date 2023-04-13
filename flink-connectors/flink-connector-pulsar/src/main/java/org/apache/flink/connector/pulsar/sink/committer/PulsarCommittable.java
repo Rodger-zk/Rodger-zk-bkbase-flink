@@ -20,8 +20,12 @@ package org.apache.flink.connector.pulsar.sink.committer;
 
 import org.apache.flink.annotation.Internal;
 
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.CheckpointValue.OutputCheckpoint;
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.types.AbstractCheckpointKey;
 import org.apache.pulsar.client.api.transaction.TxnID;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /** The writer state for Pulsar connector. We would used in Pulsar committer. */
@@ -34,9 +38,21 @@ public class PulsarCommittable {
     /** The topic name with partition information. */
     private final String topic;
 
+    private final Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo;
+
     public PulsarCommittable(TxnID txnID, String topic) {
         this.txnID = txnID;
         this.topic = topic;
+        this.checkpointInfo = null;
+    }
+
+    public PulsarCommittable(
+            TxnID txnID,
+            String topic,
+            Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo) {
+        this.txnID = txnID;
+        this.topic = topic;
+        this.checkpointInfo = new HashMap<>(checkpointInfo);
     }
 
     public TxnID getTxnID() {
@@ -45,6 +61,10 @@ public class PulsarCommittable {
 
     public String getTopic() {
         return topic;
+    }
+
+    public Map<AbstractCheckpointKey, OutputCheckpoint> getCheckpointInfo() {
+        return checkpointInfo;
     }
 
     @Override

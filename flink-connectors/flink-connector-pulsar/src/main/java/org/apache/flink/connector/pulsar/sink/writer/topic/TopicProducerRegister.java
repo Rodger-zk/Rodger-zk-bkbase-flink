@@ -26,6 +26,8 @@ import org.apache.flink.util.FlinkRuntimeException;
 
 import org.apache.flink.shaded.guava30.com.google.common.io.Closer;
 
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.CheckpointValue.OutputCheckpoint;
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.types.AbstractCheckpointKey;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.PulsarClient;
@@ -40,7 +42,9 @@ import org.apache.pulsar.common.schema.SchemaInfo;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -62,12 +66,28 @@ public class TopicProducerRegister implements Closeable {
     private final SinkConfiguration sinkConfiguration;
     private final Map<String, Map<SchemaInfo, Producer<?>>> producerRegister;
     private final Map<String, Transaction> transactionRegister;
+    private final Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo;
 
     public TopicProducerRegister(SinkConfiguration sinkConfiguration) {
         this.pulsarClient = createClient(sinkConfiguration);
         this.sinkConfiguration = sinkConfiguration;
         this.producerRegister = new HashMap<>();
         this.transactionRegister = new HashMap<>();
+        this.checkpointInfo = new HashMap<>();
+    }
+
+    public void updateCheckpointInfo(
+            Map<AbstractCheckpointKey, OutputCheckpoint> newCheckpointInfo) {
+        newCheckpointInfo.forEach(
+                (key, value) -> {
+                    if (checkpointInfo.containsKey(key)) {
+                        checkpointInfo.put(
+                                key,
+                                Collections.max(Arrays.asList(value, checkpointInfo.get(key))));
+                    } else {
+                        checkpointInfo.put(key, value);
+                    }
+                });
     }
 
     /**
@@ -97,7 +117,8 @@ public class TopicProducerRegister implements Closeable {
         transactionRegister.forEach(
                 (topic, transaction) -> {
                     TxnID txnID = transaction.getTxnID();
-                    PulsarCommittable committable = new PulsarCommittable(txnID, topic);
+                    PulsarCommittable committable =
+                            new PulsarCommittable(txnID, topic, checkpointInfo);
                     committables.add(committable);
                 });
 
@@ -198,5 +219,6 @@ public class TopicProducerRegister implements Closeable {
      */
     private void clearTransactions() {
         transactionRegister.clear();
+        checkpointInfo.clear();
     }
 }
