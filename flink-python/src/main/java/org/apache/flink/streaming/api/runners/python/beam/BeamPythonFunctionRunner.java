@@ -297,10 +297,10 @@ public abstract class BeamPythonFunctionRunner implements PythonFunctionRunner {
                             jobBundleFactory, createPythonExecutionEnvironment(config, -1));
         }
         progressHandler = getProgressHandler(flinkMetricContainer);
-
         shutdownHook =
                 ShutdownHookUtil.addShutdownHook(
                         this, BeamPythonFunctionRunner.class.getSimpleName(), LOG);
+        checkInvokeStartBundle();
     }
 
     @Override
