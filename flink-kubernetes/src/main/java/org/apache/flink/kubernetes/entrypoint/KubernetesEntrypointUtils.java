@@ -67,7 +67,8 @@ class KubernetesEntrypointUtils {
             configuration.setString(TaskManagerOptions.RPC_PORT, "0");
         }
 
-        if (HighAvailabilityMode.isHighAvailabilityModeActivated(configuration)) {
+        if (HighAvailabilityMode.isHighAvailabilityModeActivated(configuration)
+                || !KubernetesUtils.isServiceEnabled(configuration)) {
             final String ipAddress = System.getenv().get(Constants.ENV_FLINK_POD_IP_ADDRESS);
             Preconditions.checkState(
                     ipAddress != null,

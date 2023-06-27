@@ -138,7 +138,8 @@ public class CollectResultFetcher<T> {
                         LOG.debug(
                                 "The job cannot be found. It is very likely that the job is not in a RUNNING state.",
                                 e);
-                    } else if (ExceptionUtils.findThrowableWithMessage(e, FlinkJobNotFoundException.class.getName())
+                    } else if (ExceptionUtils.findThrowableWithMessage(
+                                    e, FlinkJobNotFoundException.class.getName())
                             .isPresent()) {
                         LOG.debug("The job is not in a RUNNING state on server side.", e);
                         sleepBeforeRetry();

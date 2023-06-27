@@ -551,6 +551,11 @@ public class KubernetesUtils {
         return configuration.getBoolean(KubernetesConfigOptions.KUBERNETES_SERVICE_ENABLED);
     }
 
+    /** Checks if host port is enabled. */
+    public static boolean isHostPortEnabled(Configuration configuration) {
+        return configuration.getBoolean(KubernetesConfigOptions.KUBERNETES_HOST_PORT_ENABLED);
+    }
+
     /**
      * Creates a config map with the given name if it does not exist.
      *

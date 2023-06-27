@@ -41,6 +41,9 @@ public class ExternalServiceDecorator extends AbstractKubernetesStepDecorator {
 
     @Override
     public List<HasMetadata> buildAccompanyingKubernetesResources() throws IOException {
+        if (!kubernetesJobManagerParameters.isServiceEnabled()) {
+            return Collections.emptyList();
+        }
         final Service service =
                 kubernetesJobManagerParameters
                         .getRestServiceExposedType()

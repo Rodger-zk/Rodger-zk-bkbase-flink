@@ -46,7 +46,8 @@ public class InternalServiceDecorator extends AbstractKubernetesStepDecorator {
 
     @Override
     public List<HasMetadata> buildAccompanyingKubernetesResources() throws IOException {
-        if (!kubernetesJobManagerParameters.isInternalServiceEnabled()) {
+        if (!kubernetesJobManagerParameters.isInternalServiceEnabled()
+                || !kubernetesJobManagerParameters.isServiceEnabled()) {
             return Collections.emptyList();
         }
 

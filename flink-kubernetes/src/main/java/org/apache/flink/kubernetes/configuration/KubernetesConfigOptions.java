@@ -502,13 +502,27 @@ public class KubernetesConfigOptions {
             key("kubernetes.service.enabled")
                     .booleanType()
                     .defaultValue(true)
-                    .withDescription("create kubernetes service");
+                    .withDescription("Whether to create kubernetes service for rest service.");
 
-    public static final ConfigOption<Integer> KUBERNETES_POLL_POD_IP_MAX_RETRIES =
-            key("kubernetes.poll-pod-ip.max-retries")
+    public static final ConfigOption<Boolean> KUBERNETES_HOST_PORT_ENABLED =
+            key("kubernetes.host-port.enabled")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "Whether to enable host port to expose JobManager rest service.");
+
+    public static final ConfigOption<String> KUBERNETES_HOST_PORT_ANNOTATION =
+            key("kubernetes.host-port.annotation")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Annotation to retrieve host port to expose JobManager rest service.");
+
+    public static final ConfigOption<Integer> KUBERNETES_POLL_POD_MAX_RETRIES =
+            key("kubernetes.poll-pod.max-retries")
                     .intType()
-                    .defaultValue(60)
-                    .withDescription("poll pod ip max retries");
+                    .defaultValue(30)
+                    .withDescription("Max retries to poll kubernetes pod.");
 
     private static String getDefaultFlinkImage() {
         // The default container image that ties to the exact needed versions of both Flink and

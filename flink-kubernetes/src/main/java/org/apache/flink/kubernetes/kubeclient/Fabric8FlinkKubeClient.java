@@ -18,10 +18,7 @@
 
 package org.apache.flink.kubernetes.kubeclient;
 
-import org.apache.commons.lang3.StringUtils;
-
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.kubernetes.configuration.KubernetesConfigOptions;
 import org.apache.flink.kubernetes.configuration.KubernetesLeaderElectionConfiguration;
 import org.apache.flink.kubernetes.kubeclient.decorators.ExternalServiceDecorator;
@@ -44,6 +41,8 @@ import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.flink.util.concurrent.FutureUtils;
 
 import io.fabric8.kubernetes.api.model.ConfigMap;
+import io.fabric8.kubernetes.api.model.Container;
+import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.IntOrString;
 import io.fabric8.kubernetes.api.model.LoadBalancerStatus;
@@ -57,6 +56,7 @@ import io.fabric8.kubernetes.api.model.ServicePort;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.NamespacedKubernetesClient;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -83,8 +83,9 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
     private final String clusterId;
     private final String namespace;
     private final boolean isServiceEnabled;
-    private final int pollPodIpMaxRetry;
-    private final int restPort;
+    private final boolean isHostPortEnabled;
+    private final String hostPortAnnotation;
+    private final int pollPodMaxRetry;
     private final int maxRetryAttempts;
     private final KubernetesConfigOptions.NodePortAddressType nodePortAddressType;
 
@@ -105,13 +106,15 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
                                                         "Configuration option '%s' is not set.",
                                                         KubernetesConfigOptions.CLUSTER_ID.key())));
         this.namespace = flinkConfig.getString(KubernetesConfigOptions.NAMESPACE);
-        this.isServiceEnabled =
-                flinkConfig.getBoolean(
-                        KubernetesConfigOptions.KUBERNETES_SERVICE_ENABLED);
-        this.pollPodIpMaxRetry =
-                flinkConfig.getInteger(
-                        KubernetesConfigOptions.KUBERNETES_POLL_POD_IP_MAX_RETRIES);
-        this.restPort = Integer.parseInt(flinkConfig.getString(RestOptions.BIND_PORT));
+        this.isServiceEnabled = KubernetesUtils.isServiceEnabled(flinkConfig);
+        this.isHostPortEnabled = KubernetesUtils.isHostPortEnabled(flinkConfig);
+        this.hostPortAnnotation =
+                this.isHostPortEnabled
+                        ? flinkConfig.getString(
+                                KubernetesConfigOptions.KUBERNETES_HOST_PORT_ANNOTATION)
+                        : null;
+        this.pollPodMaxRetry =
+                flinkConfig.getInteger(KubernetesConfigOptions.KUBERNETES_POLL_POD_MAX_RETRIES);
         this.maxRetryAttempts =
                 flinkConfig.getInteger(
                         KubernetesConfigOptions.KUBERNETES_TRANSACTIONAL_OPERATION_MAX_RETRIES);
@@ -184,34 +187,24 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
                 kubeClientExecutorService);
     }
 
-    private String getJobManagerPodIp(String clusterId) {
-        for (int retryAttempt = 0; retryAttempt < pollPodIpMaxRetry; retryAttempt++) {
-            List<KubernetesPod> podList =
-                    getPodsWithLabels(KubernetesUtils.getJobManagerSelectors(clusterId));
-            if (!podList.isEmpty()) {
-                String podIp = podList.get(0).getInternalResource().getStatus().getPodIP();
-                if (StringUtils.isNotBlank(podIp)) {
-                    return podIp;
-                }
-            }
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        }
-        return null;
-    }
-
     @Override
     public Optional<Endpoint> getRestEndpoint(String clusterId) {
         if (!isServiceEnabled) {
-            String address = getJobManagerPodIp(clusterId);
-            if (address == null) {
-                return Optional.empty();
-            } else {
-                return Optional.of(new Endpoint(address, restPort));
+            for (int retryAttempt = 0; retryAttempt < pollPodMaxRetry; retryAttempt++) {
+                List<KubernetesPod> podList =
+                        getPodsWithLabels(KubernetesUtils.getJobManagerSelectors(clusterId));
+                if (!podList.isEmpty()
+                        && podList.get(0).getInternalResource().getStatus().getHostIP() != null) {
+                    return getRestEndPointFromPod(podList.get(0));
+                }
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException ignored) {
+                    break;
+                }
             }
+            LOG.warn("Could not get pod of JobManager");
+            return Optional.empty();
         }
 
         Optional<KubernetesService> restService =
@@ -491,6 +484,48 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
     }
 
     /** Get rest port from the external Service. */
+    private Integer getRestPortFromPod(KubernetesPod pod) {
+        final Optional<Container> mainContainer =
+                pod.getInternalResource().getSpec().getContainers().stream()
+                        .filter(c -> Constants.MAIN_CONTAINER_NAME.equals(c.getName()))
+                        .findFirst();
+        if (!mainContainer.isPresent()) {
+            throw new RuntimeException(
+                    "Failed to get main container \""
+                            + Constants.MAIN_CONTAINER_NAME
+                            + "\" in Pod \""
+                            + pod.getName()
+                            + "\"");
+        }
+        final List<ContainerPort> restPortCandidates =
+                mainContainer.get().getPorts().stream()
+                        .filter(p -> Constants.REST_PORT_NAME.equals(p.getName()))
+                        .collect(Collectors.toList());
+        if (restPortCandidates.isEmpty()) {
+            throw new RuntimeException(
+                    "Failed to find port \""
+                            + Constants.REST_PORT_NAME
+                            + "\" in Pod \""
+                            + pod.getName()
+                            + "\"");
+        }
+        ContainerPort restPort = restPortCandidates.get(0);
+        if (isHostPortEnabled) {
+            if (restPort.getHostPort() != null) {
+                return restPort.getHostPort();
+            }
+            if (hostPortAnnotation != null) {
+                return Integer.parseInt(
+                        pod.getInternalResource()
+                                .getMetadata()
+                                .getAnnotations()
+                                .get(hostPortAnnotation));
+            }
+        }
+        return restPort.getContainerPort();
+    }
+
+    /** Get rest port from the external Service. */
     private int getRestPortFromExternalService(Service externalService) {
         final List<ServicePort> servicePortCandidates =
                 externalService.getSpec().getPorts().stream()
@@ -521,6 +556,21 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
             default:
                 throw new RuntimeException("Unrecognized Service type: " + externalServiceType);
         }
+    }
+
+    private Optional<Endpoint> getRestEndPointFromPod(KubernetesPod pod) {
+        String address;
+        if (isHostPortEnabled) {
+            address = pod.getInternalResource().getStatus().getHostIP();
+        } else {
+            address = pod.getInternalResource().getStatus().getPodIP();
+        }
+        Integer restPort = getRestPortFromPod(pod);
+        if (StringUtils.isNotBlank(address) && restPort != null) {
+            return Optional.of(new Endpoint(address, getRestPortFromPod(pod)));
+        }
+        LOG.warn("Invalid address or port for rest service:[" + address + ":" + restPort + "]");
+        return Optional.empty();
     }
 
     private Optional<Endpoint> getRestEndPointFromService(Service service, int restPort) {
