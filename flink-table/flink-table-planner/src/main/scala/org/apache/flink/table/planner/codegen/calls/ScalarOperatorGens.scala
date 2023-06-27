@@ -25,6 +25,7 @@ import org.apache.flink.table.data.utils.CastExecutor
 import org.apache.flink.table.data.writer.{BinaryArrayWriter, BinaryRowWriter}
 import org.apache.flink.table.planner.codegen.{CodeGeneratorContext, CodeGenException, GeneratedExpression}
 import org.apache.flink.table.planner.codegen.CodeGenUtils._
+import org.apache.flink.table.planner.codegen.ExprCodeGenerator
 import org.apache.flink.table.planner.codegen.GeneratedExpression.{ALWAYS_NULL, NEVER_NULL, NO_CODE}
 import org.apache.flink.table.planner.codegen.GenerateUtils._
 import org.apache.flink.table.planner.functions.casting.{CastRule, CastRuleProvider, CodeGeneratorCastRule, ExpressionCodeGeneratorCastRule}
@@ -41,8 +42,11 @@ import org.apache.flink.table.types.logical.utils.LogicalTypeMerging.findCommonT
 import org.apache.flink.table.utils.DateTimeUtils.MILLIS_PER_DAY
 import org.apache.flink.util.Preconditions.checkArgument
 
+import org.apache.calcite.rex.RexNode
+
 import java.time.ZoneId
 import java.util.Arrays.asList
+import java.util.UUID.randomUUID
 
 import scala.collection.JavaConversions._
 
@@ -932,21 +936,31 @@ object ScalarOperatorGens {
   }
 
   def generateIfElse(
-      ctx: CodeGeneratorContext,
-      operands: Seq[GeneratedExpression],
+      codeGenerator: ExprCodeGenerator,
+      operands: Seq[RexNode],
       resultType: LogicalType,
       i: Int = 0): GeneratedExpression = {
+    val ctx = codeGenerator.ctx
     // else part
     if (i == operands.size - 1) {
-      generateCast(ctx, operands(i), resultType, nullOnFailure = true)
+      generateCast(
+        ctx,
+        codeGenerator.generateExpression(operands(i)),
+        resultType,
+        nullOnFailure = true)
     } else {
       // check that the condition is boolean
       // we do not check for null instead we use the default value
       // thus null is false
-      requireBoolean(operands(i))
-      val condition = operands(i)
-      val trueAction = generateCast(ctx, operands(i + 1), resultType, nullOnFailure = true)
-      val falseAction = generateIfElse(ctx, operands, resultType, i + 2)
+      val condition = codeGenerator.generateExpression(operands(i))
+      requireBoolean(condition)
+      ctx.addReuseTermScope(Option(s"IF-TRUE-${randomUUID().toString}"))
+      val trueActionExpr = codeGenerator.generateExpression(operands(i + 1))
+      val trueAction = generateCast(ctx, trueActionExpr, resultType, nullOnFailure = true)
+      ctx.popReuseTermScope()
+      ctx.addReuseTermScope(Option(s"IF-FALSE-${randomUUID().toString}"))
+      val falseAction = generateIfElse(codeGenerator, operands, resultType, i + 2)
+      ctx.popReuseTermScope()
 
       val Seq(resultTerm, nullTerm) = newNames("result", "isNull")
       val resultTypeTerm = primitiveTypeTermForType(resultType)

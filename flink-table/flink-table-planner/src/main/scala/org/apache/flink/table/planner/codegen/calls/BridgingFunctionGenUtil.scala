@@ -135,7 +135,12 @@ object BridgingFunctionGenUtil {
     } else if (udf.getKind == FunctionKind.ASYNC_TABLE) {
       generateAsyncTableFunctionCall(ctx, functionTerm, externalOperands, returnType)
     } else {
-      generateScalarFunctionCall(ctx, functionTerm, externalOperands, outputDataType)
+      generateScalarFunctionCall(
+        ctx,
+        functionTerm,
+        externalOperands,
+        outputDataType,
+        udf.isDeterministic)
     }
   }
 
@@ -250,7 +255,8 @@ object BridgingFunctionGenUtil {
       ctx: CodeGeneratorContext,
       functionTerm: String,
       externalOperands: Seq[GeneratedExpression],
-      outputDataType: DataType): GeneratedExpression = {
+      outputDataType: DataType,
+      isDeterministic: Boolean): GeneratedExpression = {
 
     // result conversion
     val externalResultClass = outputDataType.getConversionClass
@@ -264,13 +270,26 @@ object BridgingFunctionGenUtil {
     } else {
       s"($externalResultTypeTerm) (${typeTerm(externalResultClassBoxed)})"
     }
-    val externalResultTerm = ctx.addReusableLocalVariable(externalResultTypeTerm, "externalResult")
-    val externalCode =
+    val funcEvalCode =
+      s"""
+         |$externalResultCasting $functionTerm
+         |  .$SCALAR_EVAL(${externalOperands.map(_.resultTerm).map(ctx.reuseResultTerm).mkString(", ")});
+         |""".stripMargin
+    val externalResultTerm =
+      ctx.addReusableLocalVariable(externalResultTypeTerm, "externalResult")
+    val externalCode = if (isDeterministic) {
+      val reusableExternalResultTerm =
+        ctx.reuseResultTermAndAddReusable(funcEvalCode, externalResultTerm)
       s"""
          |${externalOperands.map(_.code).mkString("\n")}
-         |$externalResultTerm = $externalResultCasting $functionTerm
-         |  .$SCALAR_EVAL(${externalOperands.map(_.resultTerm).mkString(", ")});
+         |$externalResultTerm = $reusableExternalResultTerm;
          |""".stripMargin
+    } else {
+      s"""
+         |${externalOperands.map(_.code).mkString("\n")}
+         |$externalResultTerm = $funcEvalCode
+         |""".stripMargin
+    }
 
     val internalExpr = genToInternalConverterAll(ctx, outputDataType, externalResultTerm)
 
@@ -297,7 +316,7 @@ object BridgingFunctionGenUtil {
           operand match {
             case external: ExternalGeneratedExpression
                 if !isInternal(dataType) && (external.getDataType == dataType) =>
-              operand.copy(resultTerm = external.getExternalTerm, code = external.getExternalCode)
+              operand.copy(resultTerm = external.getExternalTerm, code = external.code)
             case _ => operand.copy(resultTerm = genToExternalConverterAll(ctx, dataType, operand))
           }
       }

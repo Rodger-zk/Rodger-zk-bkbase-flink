@@ -551,16 +551,18 @@ object GenerateUtils {
       ctx.addReusableLocalVariables((resultTypeTerm, "result"), ("boolean", "isNull"))
 
     val wrappedCode = if (ctx.nullCheck) {
+      val nullTermExpr = s"${ctx.reuseResultTerm(inputTerm)} == null"
+      val reusableNullTerm = ctx.reuseNullTermAndAddReusable(nullTermExpr, nullTerm)
       s"""
-         |$nullTerm = $inputTerm == null;
+         |$nullTerm = $reusableNullTerm;
          |$resultTerm = $defaultValue;
          |if (!$nullTerm) {
-         |  $resultTerm = $inputUnboxingTerm;
+         |  $resultTerm = ${ctx.reuseResultTermAndAddReusable(inputUnboxingTerm, resultTerm)};
          |}
          |""".stripMargin.trim
     } else {
       s"""
-         |$resultTerm = $inputUnboxingTerm;
+         |$resultTerm = ${ctx.reuseResultTermAndAddReusable(inputUnboxingTerm, resultTerm)};
          |""".stripMargin.trim
     }
 

@@ -795,7 +795,7 @@ object CodeGenUtils {
       val externalTypeTerm = typeTerm(sourceDataType.getConversionClass)
       val converterTerm = ctx.addReusableConverter(sourceDataType)
       externalTerm =>
-        s"($internalTypeTerm) $converterTerm.toInternalOrNull(($externalTypeTerm) $externalTerm)"
+        s"($internalTypeTerm) $converterTerm.toInternalOrNull(($externalTypeTerm) ${ctx.reuseResultTerm(externalTerm)})"
     }
   }
 
@@ -825,18 +825,19 @@ object CodeGenUtils {
       sourceDataType: DataType,
       externalTerm: String): GeneratedExpression = {
 
+    val reusableExternalTerm = ctx.reuseResultTerm(externalTerm)
     // fallback to old stack if at least one legacy type is present
     if (LogicalTypeChecks.hasLegacyTypes(sourceDataType.getLogicalType)) {
-      return genToInternalConverterAllWithLegacy(ctx, sourceDataType, externalTerm)
+      return genToInternalConverterAllWithLegacy(ctx, sourceDataType, reusableExternalTerm)
     }
 
     val sourceType = sourceDataType.getLogicalType
     val sourceClass = sourceDataType.getConversionClass
     // convert external source type to internal structure
     val internalResultTerm = if (isInternal(sourceDataType)) {
-      s"$externalTerm"
+      s"$reusableExternalTerm"
     } else {
-      genToInternalConverter(ctx, sourceDataType)(externalTerm)
+      genToInternalConverter(ctx, sourceDataType)(reusableExternalTerm)
     }
     // extract null term from result term
     if (sourceClass.isPrimitive) {
@@ -899,16 +900,17 @@ object CodeGenUtils {
     }
 
     // convert internal structure to target type
+    val internalResultTerm = ctx.reuseResultTerm(internalExpr.resultTerm)
     val externalResultTerm = if (isInternal(targetDataType)) {
-      s"($targetTypeTerm) ${internalExpr.resultTerm}"
+      s"($targetTypeTerm) $internalResultTerm"
     } else {
-      genToExternalConverter(ctx, targetDataType, internalExpr.resultTerm)
+      genToExternalConverter(ctx, targetDataType, internalResultTerm)
     }
     // merge null term into the result term
     if (targetDataType.getConversionClass.isPrimitive) {
       externalResultTerm
     } else {
-      s"${internalExpr.nullTerm} ? null : ($externalResultTerm)"
+      s"${ctx.reuseNullTerm(internalExpr.nullTerm)} ? null : ($externalResultTerm)"
     }
   }
 

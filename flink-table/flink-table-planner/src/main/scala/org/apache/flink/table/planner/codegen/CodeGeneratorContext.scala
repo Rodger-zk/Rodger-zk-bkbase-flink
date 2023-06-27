@@ -118,6 +118,19 @@ class CodeGeneratorContext(val tableConfig: TableConfig) {
   private val reusableExternalSerializers: mutable.Map[DataType, String] =
     mutable.Map[DataType, String]()
 
+  // map of scalar function result terms that will be added only once
+  // result code -> term to reuse
+  private val reusableResultTerms: mutable.Map[(Option[AnyRef], String), String] =
+    mutable.Map[(Option[AnyRef], String), String]()
+
+  // map of scalar function null terms that will be added only once
+  // result code -> term to reuse
+  private val reusableNullTerms: mutable.Map[(Option[AnyRef], String), String] =
+    mutable.Map[(Option[AnyRef], String), String]()
+
+  private val reuseTermScopes: mutable.ListBuffer[Option[AnyRef]] =
+    mutable.ListBuffer[Option[AnyRef]](None)
+
   /**
    * The current method name for [[reusableLocalVariableStatements]]. You can start a new local
    * variable statements for another method using [[startNewLocalVariableStatement()]]
@@ -968,6 +981,76 @@ class CodeGeneratorContext(val tableConfig: TableConfig) {
     reusableInitStatements.add(nullableInit)
 
     fieldTerm
+  }
+
+  def addReuseTermScope(scope: Option[AnyRef]): Unit = {
+    reuseTermScopes.append(scope)
+  }
+
+  def popReuseTermScope(): Unit = {
+    reuseTermScopes.trimEnd(1)
+  }
+
+  def getCurrentReuseTermScope: Option[AnyRef] = {
+    reuseTermScopes.last.orElse(None)
+  }
+
+  def addReusableResultTerm(term: String, originalTerm: String): Unit = {
+    val currentReuseScope = getCurrentReuseTermScope
+    if (!reusableResultTerms.contains((currentReuseScope, term))) {
+      reusableResultTerms.put((currentReuseScope, term), originalTerm);
+    }
+  }
+
+  def addReusableNullTerm(term: String, originalTerm: String): Unit = {
+    val currentReuseScope = getCurrentReuseTermScope
+    if (!reusableNullTerms.contains((currentReuseScope, term))) {
+      reusableNullTerms.put((currentReuseScope, term), originalTerm)
+    }
+  }
+
+  def reuseResultTerm(code: String): String = {
+    reuseTermScopes.reverse
+      .collectFirst {
+        case scope if reusableResultTerms.contains((scope, code)) =>
+          reusableResultTerms.get((scope, code))
+      }
+      .getOrElse(Option(code))
+      .get
+  }
+
+  def reuseResultTermAndAddReusable(code: String, term: String): String = {
+    val reusableTerm = reuseResultTerm(code)
+    if (reusableTerm.equals(code)) {
+      // no previous result is reused
+      addReusableResultTerm(code, term)
+    } else {
+      // make this term reusable
+      addReusableResultTerm(term, reusableTerm)
+    }
+    reusableTerm
+  }
+
+  def reuseNullTerm(code: String): String = {
+    reuseTermScopes.reverse
+      .collectFirst {
+        case scope if reusableNullTerms.contains((scope, code)) =>
+          reusableNullTerms.get((scope, code))
+      }
+      .getOrElse(Option(code))
+      .get
+  }
+
+  def reuseNullTermAndAddReusable(code: String, term: String): String = {
+    val reusableTerm = reuseNullTerm(code)
+    if (reusableTerm.equals(code)) {
+      // no previous term is reused
+      addReusableNullTerm(code, term)
+    } else {
+      // make this term reusable
+      addReusableNullTerm(term, reusableTerm)
+    }
+    reusableTerm
   }
 }
 

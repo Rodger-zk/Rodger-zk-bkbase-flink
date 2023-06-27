@@ -59,12 +59,18 @@ class ScalarFunctionCallGen(scalarFunction: ScalarFunction) extends CallGenerato
       boxedTypeTermForType(returnType)
     }
     val resultTerm = ctx.addReusableLocalVariable(resultTypeTerm, "result")
-    val evalResult = s"$functionReference.eval(${parameters.map(_.resultTerm).mkString(", ")})"
+    val funcEvalCode =
+      s"$functionReference.eval(${parameters.map(_.resultTerm).map(ctx.reuseResultTerm).mkString(", ")})"
     val resultExternalType =
       UserDefinedFunctionUtils.getResultTypeOfScalarFunction(scalarFunction, operandTypes)
-    val setResult = {
+    val (setResult, externalTerm, internalTerm) = {
       if (resultClass.isPrimitive && isInternalClass(resultExternalType)) {
-        s"$resultTerm = $evalResult;"
+        val evalResult = if (scalarFunction.isDeterministic) {
+          ctx.reuseResultTermAndAddReusable(funcEvalCode, resultTerm)
+        } else {
+          funcEvalCode
+        }
+        (s"$resultTerm = $evalResult;", resultTerm, resultTerm)
       } else {
         val javaTerm = newName("javaResult")
         // it maybe a Internal class, so use resultClass is most safety.
@@ -82,11 +88,16 @@ class ScalarFunctionCallGen(scalarFunction: ScalarFunction) extends CallGenerato
           } else {
             resultExternalType
           }
+        val evalResult = if (scalarFunction.isDeterministic) {
+          ctx.reuseResultTermAndAddReusable(funcEvalCode, javaTerm)
+        } else {
+          funcEvalCode
+        }
         val internal = genToInternalIfNeeded(ctx, resultExternalTypeWithResultClass, javaTerm)
-        s"""
-           |$javaTypeTerm $javaTerm = ($javaTypeTerm) $evalResult;
-           |$resultTerm = $javaTerm == null ? null : ($internal);
-            """.stripMargin
+        (
+          s"$javaTypeTerm $javaTerm = ($javaTypeTerm) $evalResult;",
+          javaTerm,
+          s"${ctx.reuseResultTerm(javaTerm)} == null ? null : ($internal)")
       }
     }
 
@@ -100,7 +111,7 @@ class ScalarFunctionCallGen(scalarFunction: ScalarFunction) extends CallGenerato
     val resultUnboxing = if (resultClass.isPrimitive) {
       GenerateUtils.generateNonNullField(returnType, resultTerm)
     } else {
-      GenerateUtils.generateInputFieldUnboxing(ctx, returnType, resultTerm, resultTerm)
+      GenerateUtils.generateInputFieldUnboxing(ctx, returnType, externalTerm, internalTerm)
     }
     resultUnboxing.copy(code = s"""
                                   |$functionCallCode
@@ -119,7 +130,7 @@ class ScalarFunctionCallGen(scalarFunction: ScalarFunction) extends CallGenerato
 
   def genToInternalIfNeeded(ctx: CodeGeneratorContext, t: DataType, term: String): String = {
     if (isInternalClass(t)) {
-      s"(${boxedTypeTermForType(LogicalTypeDataTypeConverter.fromDataTypeToLogicalType(t))}) $term"
+      s"(${boxedTypeTermForType(LogicalTypeDataTypeConverter.fromDataTypeToLogicalType(t))}) ${ctx.reuseResultTerm(term)}"
     } else {
       genToInternalConverter(ctx, t, term)
     }

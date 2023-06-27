@@ -48,13 +48,15 @@ import org.apache.calcite.rex._
 import org.apache.calcite.sql.`type`.{ReturnTypes, SqlTypeName}
 import org.apache.calcite.sql.{SqlKind, SqlOperator}
 
+import java.util.UUID.randomUUID
+
 import scala.collection.JavaConversions._
 
 /**
  * This code generator is mainly responsible for generating codes for a given calcite [[RexNode]].
  * It can also generate type conversion codes for the result converter.
  */
-class ExprCodeGenerator(ctx: CodeGeneratorContext, nullableInput: Boolean)
+class ExprCodeGenerator(val ctx: CodeGeneratorContext, nullableInput: Boolean)
   extends RexVisitor[GeneratedExpression] {
 
   // check if nullCheck is enabled when inputs can be null
@@ -476,6 +478,38 @@ class ExprCodeGenerator(ctx: CodeGeneratorContext, nullableInput: Boolean)
         ctx,
         generateExpression(call.getOperands.get(0)),
         call.getOperands.get(1).asInstanceOf[RexLiteral])
+    } else if (call.getOperator == CASE) {
+      return generateIfElse(this, call.getOperands, resultType)
+    } else if (call.getOperator == AND) {
+      return call.getOperands
+        .map {
+          operand: RexNode =>
+            ctx.addReuseTermScope(Option(s"LEFT-FALSE-${randomUUID().toString}"))
+            val operandExpr = generateExpression(operand)
+            ctx.popReuseTermScope()
+            operandExpr
+        }
+        .reduceLeft {
+          (left: GeneratedExpression, right: GeneratedExpression) =>
+            requireBoolean(left)
+            requireBoolean(right)
+            generateAnd(ctx, left, right)
+        }
+    } else if (call.getOperator == OR) {
+      return call.getOperands
+        .map {
+          operand: RexNode =>
+            ctx.addReuseTermScope(Option(s"LEFT-TRUE-${randomUUID().toString}"))
+            val operandExpr = generateExpression(operand)
+            ctx.popReuseTermScope()
+            operandExpr
+        }
+        .reduceLeft {
+          (left: GeneratedExpression, right: GeneratedExpression) =>
+            requireBoolean(left)
+            requireBoolean(right)
+            generateOr(ctx, left, right)
+        }
     }
 
     // convert operands and help giving untyped NULL literals a type
@@ -640,30 +674,10 @@ class ExprCodeGenerator(ctx: CodeGeneratorContext, nullableInput: Boolean)
         val operand = operands.head
         generateIsNotNull(ctx, operand)
 
-      // logic
-      case AND =>
-        operands.reduceLeft {
-          (left: GeneratedExpression, right: GeneratedExpression) =>
-            requireBoolean(left)
-            requireBoolean(right)
-            generateAnd(ctx, left, right)
-        }
-
-      case OR =>
-        operands.reduceLeft {
-          (left: GeneratedExpression, right: GeneratedExpression) =>
-            requireBoolean(left)
-            requireBoolean(right)
-            generateOr(ctx, left, right)
-        }
-
       case NOT =>
         val operand = operands.head
         requireBoolean(operand)
         generateNot(ctx, operand)
-
-      case CASE =>
-        generateIfElse(ctx, operands, resultType)
 
       case IS_TRUE =>
         val operand = operands.head
