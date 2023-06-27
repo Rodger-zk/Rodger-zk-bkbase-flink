@@ -125,7 +125,12 @@ public abstract class ParquetVectorizedInputFormat<T, SplitT extends FileSourceS
                         .withRange(splitOffset, splitOffset + splitLength)
                         .withRecordFilter(filter)
                         .build();
-        ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile, parquetReadOptions);
+        ParquetFileReader parquetFileReader;
+        try {
+            parquetFileReader = ParquetFileReader.open(inputFile, parquetReadOptions);
+        } catch (IOException e) {
+            throw new IOException("Could not open Parquet file: " + filePath, e);
+        }
 
         MessageType fileSchema = parquetFileReader.getFooter().getFileMetaData().getSchema();
         // Pruning unnecessary column, we should set the projection schema before running any
