@@ -24,8 +24,10 @@ import org.apache.flink.table.catalog.hive.util.HiveTypeUtil;
 import org.apache.flink.table.functions.hive.conversion.HiveInspectors;
 import org.apache.flink.table.types.DataType;
 
+import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
+import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDF;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDFBaseNumeric;
 import org.apache.hadoop.hive.serde2.objectinspector.ConstantObjectInspector;
@@ -51,6 +53,8 @@ public class HiveGenericUDF extends HiveScalarFunction<GenericUDF> {
 
     @Override
     public void openInternal() {
+
+        initHiveSessionState();
 
         LOG.info("Open HiveGenericUDF as {}", hiveFunctionWrapper.getClassName());
 
@@ -97,6 +101,7 @@ public class HiveGenericUDF extends HiveScalarFunction<GenericUDF> {
         LOG.info(
                 "Getting result type of HiveGenericUDF from {}",
                 hiveFunctionWrapper.getClassName());
+        initHiveSessionState();
         ObjectInspector[] argumentInspectors =
                 HiveInspectors.toInspectors(hiveShim, constantArguments, argTypes);
 
@@ -115,5 +120,15 @@ public class HiveGenericUDF extends HiveScalarFunction<GenericUDF> {
             baseNumeric.setConfLookupNeeded(false);
         }
         return function;
+    }
+
+    private void initHiveSessionState() {
+        if (SessionState.get() == null) {
+            LOG.info("Initializing Hive session state on current thread");
+            SessionState ss = new SessionState(new HiveConf());
+            ss.setupQueryCurrentTimestamp();
+            ss.getConf().setClassLoader(null);
+            SessionState.setCurrentSessionState(ss);
+        }
     }
 }
