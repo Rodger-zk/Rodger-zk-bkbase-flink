@@ -524,6 +524,24 @@ public class KubernetesConfigOptions {
                     .defaultValue(30)
                     .withDescription("Max retries to poll kubernetes pod.");
 
+    public static final ConfigOption<Integer> KUBERNETES_WAIT_POD_SCHEDULED_MAX_RETRIES =
+            key("kubernetes.wait-pod-scheduled.max-retries")
+                    .intType()
+                    .defaultValue(60)
+                    .withDescription("Max retries to wait kubernetes pod to be scheduled.");
+
+    public static final ConfigOption<Integer> KUBERNETES_CONNECTION_TIMEOUT =
+            key("kubernetes.connection-timeout")
+                    .intType()
+                    .defaultValue(10000)
+                    .withDescription("Kubernetes client connection timeout in ms.");
+
+    public static final ConfigOption<Integer> KUBERNETES_REQUEST_TIMEOUT =
+            key("kubernetes.request-timeout")
+                    .intType()
+                    .defaultValue(10000)
+                    .withDescription("Kubernetes client request timeout in ms.");
+
     private static String getDefaultFlinkImage() {
         // The default container image that ties to the exact needed versions of both Flink and
         // Scala.

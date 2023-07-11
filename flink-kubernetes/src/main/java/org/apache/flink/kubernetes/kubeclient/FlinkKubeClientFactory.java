@@ -91,6 +91,10 @@ public class FlinkKubeClientFactory {
         final String namespace = flinkConfig.getString(KubernetesConfigOptions.NAMESPACE);
         LOG.debug("Setting namespace of Kubernetes client to {}", namespace);
         config.setNamespace(namespace);
+        config.setConnectionTimeout(
+                flinkConfig.getInteger(KubernetesConfigOptions.KUBERNETES_CONNECTION_TIMEOUT));
+        config.setRequestTimeout(
+                flinkConfig.getInteger(KubernetesConfigOptions.KUBERNETES_REQUEST_TIMEOUT));
 
         final NamespacedKubernetesClient client = new DefaultKubernetesClient(config);
         final int poolSize =

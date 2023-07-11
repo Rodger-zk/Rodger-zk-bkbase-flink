@@ -85,7 +85,8 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
     private final boolean isServiceEnabled;
     private final boolean isHostPortEnabled;
     private final String hostPortAnnotation;
-    private final int pollPodMaxRetry;
+    private final int pollPodMaxRetryAttempts;
+    private final int waitPodScheduledMaxRetryAttempts;
     private final int maxRetryAttempts;
     private final KubernetesConfigOptions.NodePortAddressType nodePortAddressType;
 
@@ -113,8 +114,11 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
                         ? flinkConfig.getString(
                                 KubernetesConfigOptions.KUBERNETES_HOST_PORT_ANNOTATION)
                         : null;
-        this.pollPodMaxRetry =
+        this.pollPodMaxRetryAttempts =
                 flinkConfig.getInteger(KubernetesConfigOptions.KUBERNETES_POLL_POD_MAX_RETRIES);
+        this.waitPodScheduledMaxRetryAttempts =
+                flinkConfig.getInteger(
+                        KubernetesConfigOptions.KUBERNETES_WAIT_POD_SCHEDULED_MAX_RETRIES);
         this.maxRetryAttempts =
                 flinkConfig.getInteger(
                         KubernetesConfigOptions.KUBERNETES_TRANSACTIONAL_OPERATION_MAX_RETRIES);
@@ -190,12 +194,13 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
     @Override
     public Optional<Endpoint> getRestEndpoint(String clusterId) {
         if (!isServiceEnabled) {
-            for (int retryAttempt = 0; retryAttempt < pollPodMaxRetry; retryAttempt++) {
-                List<KubernetesPod> podList =
-                        getPodsWithLabels(KubernetesUtils.getJobManagerSelectors(clusterId));
-                if (!podList.isEmpty()
-                        && podList.get(0).getInternalResource().getStatus().getHostIP() != null) {
-                    return getRestEndPointFromPod(podList.get(0));
+            for (int retryAttempt = 0; retryAttempt < pollPodMaxRetryAttempts; retryAttempt++) {
+                if (getPodsWithLabels(KubernetesUtils.getJobManagerSelectors(clusterId)) != null) {
+                    break;
+                }
+                if (retryAttempt + 1 >= pollPodMaxRetryAttempts) {
+                    LOG.warn("Could not get pod of JobManager");
+                    return Optional.empty();
                 }
                 try {
                     Thread.sleep(100);
@@ -203,7 +208,22 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
                     break;
                 }
             }
-            LOG.warn("Could not get pod of JobManager");
+            for (int retryAttempt = 0;
+                    retryAttempt < waitPodScheduledMaxRetryAttempts;
+                    retryAttempt++) {
+                List<KubernetesPod> podList =
+                        getPodsWithLabels(KubernetesUtils.getJobManagerSelectors(clusterId));
+                if (!podList.isEmpty()
+                        && podList.get(0).getInternalResource().getStatus().getHostIP() != null) {
+                    return getRestEndPointFromPod(podList.get(0));
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignored) {
+                    break;
+                }
+            }
+            LOG.warn("Pod of JobManager was not scheduled");
             return Optional.empty();
         }
 

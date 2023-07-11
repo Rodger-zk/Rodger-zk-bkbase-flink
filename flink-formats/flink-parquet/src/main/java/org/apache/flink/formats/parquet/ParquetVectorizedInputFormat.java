@@ -128,7 +128,7 @@ public abstract class ParquetVectorizedInputFormat<T, SplitT extends FileSourceS
         ParquetFileReader parquetFileReader;
         try {
             parquetFileReader = ParquetFileReader.open(inputFile, parquetReadOptions);
-        } catch (IOException e) {
+        } catch (Exception e) {
             throw new IOException("Could not open Parquet file: " + filePath, e);
         }
 
