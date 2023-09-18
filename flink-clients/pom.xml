@@ -144,20 +144,20 @@ under the License.
 							</descriptors>
 						</configuration>
 					</execution>
-					<execution>
-						<id>create-test-dependency-user-jar-depend</id>
-						<phase>process-test-classes</phase>
-						<goals>
-							<goal>single</goal>
-						</goals>
-						<configuration>
-							<finalName>maven</finalName>
-							<attach>false</attach>
-							<descriptors>
-								<descriptor>src/test/assembly/test-assembly-test-user-classloader-job-lib-jar.xml</descriptor>
-							</descriptors>
-						</configuration>
-					</execution>
+<!--					<execution>-->
+<!--						<id>create-test-dependency-user-jar-depend</id>-->
+<!--						<phase>process-test-classes</phase>-->
+<!--						<goals>-->
+<!--							<goal>single</goal>-->
+<!--						</goals>-->
+<!--						<configuration>-->
+<!--							<finalName>maven</finalName>-->
+<!--							<attach>false</attach>-->
+<!--							<descriptors>-->
+<!--								<descriptor>src/test/assembly/test-assembly-test-user-classloader-job-lib-jar.xml</descriptor>-->
+<!--							</descriptors>-->
+<!--						</configuration>-->
+<!--					</execution>-->
 				</executions>
 			</plugin>
 			<!--Remove the external jar test code from the test-classes directory since it mustn't be in the
