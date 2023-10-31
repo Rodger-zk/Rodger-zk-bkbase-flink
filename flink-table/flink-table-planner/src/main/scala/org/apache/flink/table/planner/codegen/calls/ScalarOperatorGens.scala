@@ -377,6 +377,20 @@ object ScalarOperatorGens {
     else if (isComparable(left.resultType) && canEqual) {
       generateComparison(ctx, "==", left, right)
     }
+    // string type and other type
+    else if (isCharacterString(left.resultType) &&
+      left.resultType.getTypeRoot != right.resultType.getTypeRoot) {
+      generateOperatorIfNotNull(ctx, new BooleanType(), left, right) {
+        (leftTerm, rightTerm) => s"$leftTerm.equals(String.valueOf($rightTerm))"
+      }
+    }
+    // other type and string type
+    else if (isCharacterString(right.resultType) &&
+      left.resultType.getTypeRoot != right.resultType.getTypeRoot) {
+      generateOperatorIfNotNull(ctx, new BooleanType(), left, right) {
+        (leftTerm, rightTerm) => s"$rightTerm.equals(String.valueOf($leftTerm))"
+      }
+    }
     // generic types of same type
     else if (isRaw(left.resultType) && canEqual) {
       val Seq(resultTerm, nullTerm) = newNames("result", "isNull")
@@ -484,6 +498,20 @@ object ScalarOperatorGens {
       isInteroperable(left.resultType, right.resultType)
     ) {
       generateComparison(ctx, "!=", left, right)
+    }
+    // string type and other type
+    else if (isCharacterString(left.resultType) &&
+      left.resultType.getTypeRoot != right.resultType.getTypeRoot) {
+      generateOperatorIfNotNull(ctx, new BooleanType(), left, right) {
+        (leftTerm, rightTerm) => s"!($leftTerm.equals(String.valueOf($rightTerm)))"
+      }
+    }
+    // other type and string type
+    else if (isCharacterString(right.resultType) &&
+      left.resultType.getTypeRoot != right.resultType.getTypeRoot) {
+      generateOperatorIfNotNull(ctx, new BooleanType(), left, right) {
+        (leftTerm, rightTerm) => s"!($rightTerm.equals(String.valueOf($leftTerm)))"
+      }
     }
     // non-comparable types
     else {
