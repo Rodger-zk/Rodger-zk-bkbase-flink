@@ -111,8 +111,11 @@ import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.io.ObjectOutputStream;
+import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -131,6 +134,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -272,6 +277,7 @@ public class RestClusterClient<T> implements ClusterClient<T> {
      * Requests the job details.
      *
      * @param jobId The job id
+     *
      * @return Job details
      */
     public CompletableFuture<JobDetailsInfo> getJobDetails(JobID jobId) {
@@ -294,8 +300,9 @@ public class RestClusterClient<T> implements ClusterClient<T> {
      * to poll the {@link JobResult} before giving up.
      *
      * @param jobId specifying the job for which to retrieve the {@link JobResult}
+     *
      * @return Future which is completed with the {@link JobResult} once the job has completed or
-     *     with a failure if the {@link JobResult} could not be retrieved.
+     *         with a failure if the {@link JobResult} could not be retrieved.
      */
     @Override
     public CompletableFuture<JobResult> requestJobResult(@Nonnull JobID jobId) {
@@ -313,8 +320,8 @@ public class RestClusterClient<T> implements ClusterClient<T> {
                                 final java.nio.file.Path jobGraphFile =
                                         Files.createTempFile("flink-jobgraph", ".bin");
                                 try (ObjectOutputStream objectOut =
-                                        new ObjectOutputStream(
-                                                Files.newOutputStream(jobGraphFile))) {
+                                             new ObjectOutputStream(
+                                                     Files.newOutputStream(jobGraphFile))) {
                                     objectOut.writeObject(jobGraph);
                                 }
                                 return jobGraphFile;
@@ -641,8 +648,8 @@ public class RestClusterClient<T> implements ClusterClient<T> {
                                     SavepointDisposalStatusHeaders.getInstance();
                             final SavepointDisposalStatusMessageParameters
                                     savepointDisposalStatusMessageParameters =
-                                            savepointDisposalStatusHeaders
-                                                    .getUnresolvedMessageParameters();
+                                    savepointDisposalStatusHeaders
+                                            .getUnresolvedMessageParameters();
                             savepointDisposalStatusMessageParameters.triggerIdPathParameter.resolve(
                                     triggerId);
 
@@ -681,9 +688,10 @@ public class RestClusterClient<T> implements ClusterClient<T> {
      * AsynchronouslyCreatedResource#resource()}.
      *
      * @param resourceFutureSupplier The operation which polls for the {@code
-     *     AsynchronouslyCreatedResource}.
+     *         AsynchronouslyCreatedResource}.
      * @param <R> The type of the resource.
      * @param <A> The type of the {@code AsynchronouslyCreatedResource}.
+     *
      * @return A {@code CompletableFuture} delivering the resource.
      */
     private <R, A extends AsynchronouslyCreatedResource<R>> CompletableFuture<R> pollResourceAsync(
@@ -764,13 +772,13 @@ public class RestClusterClient<T> implements ClusterClient<T> {
 
     private CompletableFuture<JobResult> requestJobResultInternal(@Nonnull JobID jobId) {
         return pollResourceAsync(
-                        () -> {
-                            final JobMessageParameters messageParameters =
-                                    new JobMessageParameters();
-                            messageParameters.jobPathParameter.resolve(jobId);
-                            return sendRequest(
-                                    JobExecutionResultHeaders.getInstance(), messageParameters);
-                        })
+                () -> {
+                    final JobMessageParameters messageParameters =
+                            new JobMessageParameters();
+                    messageParameters.jobPathParameter.resolve(jobId);
+                    return sendRequest(
+                            JobExecutionResultHeaders.getInstance(), messageParameters);
+                })
                 .thenApply(
                         jobResult -> {
                             if (jobResult.getApplicationStatus() == ApplicationStatus.UNKNOWN) {
@@ -782,24 +790,24 @@ public class RestClusterClient<T> implements ClusterClient<T> {
     }
 
     private <
-                    M extends MessageHeaders<EmptyRequestBody, P, U>,
-                    U extends MessageParameters,
-                    P extends ResponseBody>
-            CompletableFuture<P> sendRequest(M messageHeaders, U messageParameters) {
+            M extends MessageHeaders<EmptyRequestBody, P, U>,
+            U extends MessageParameters,
+            P extends ResponseBody>
+    CompletableFuture<P> sendRequest(M messageHeaders, U messageParameters) {
         return sendRequest(messageHeaders, messageParameters, EmptyRequestBody.getInstance());
     }
 
     private <
-                    M extends MessageHeaders<R, P, EmptyMessageParameters>,
-                    R extends RequestBody,
-                    P extends ResponseBody>
-            CompletableFuture<P> sendRequest(M messageHeaders, R request) {
+            M extends MessageHeaders<R, P, EmptyMessageParameters>,
+            R extends RequestBody,
+            P extends ResponseBody>
+    CompletableFuture<P> sendRequest(M messageHeaders, R request) {
         return sendRequest(messageHeaders, EmptyMessageParameters.getInstance(), request);
     }
 
     @VisibleForTesting
     <M extends MessageHeaders<EmptyRequestBody, P, EmptyMessageParameters>, P extends ResponseBody>
-            CompletableFuture<P> sendRequest(M messageHeaders) {
+    CompletableFuture<P> sendRequest(M messageHeaders) {
         return sendRequest(
                 messageHeaders,
                 EmptyMessageParameters.getInstance(),
@@ -808,11 +816,11 @@ public class RestClusterClient<T> implements ClusterClient<T> {
 
     @VisibleForTesting
     public <
-                    M extends MessageHeaders<R, P, U>,
-                    U extends MessageParameters,
-                    R extends RequestBody,
-                    P extends ResponseBody>
-            CompletableFuture<P> sendRequest(M messageHeaders, U messageParameters, R request) {
+            M extends MessageHeaders<R, P, U>,
+            U extends MessageParameters,
+            R extends RequestBody,
+            P extends ResponseBody>
+    CompletableFuture<P> sendRequest(M messageHeaders, U messageParameters, R request) {
         return sendRetriableRequest(
                 messageHeaders,
                 messageParameters,
@@ -821,15 +829,15 @@ public class RestClusterClient<T> implements ClusterClient<T> {
     }
 
     private <
-                    M extends MessageHeaders<R, P, U>,
-                    U extends MessageParameters,
-                    R extends RequestBody,
-                    P extends ResponseBody>
-            CompletableFuture<P> sendRetriableRequest(
-                    M messageHeaders,
-                    U messageParameters,
-                    R request,
-                    Predicate<Throwable> retryPredicate) {
+            M extends MessageHeaders<R, P, U>,
+            U extends MessageParameters,
+            R extends RequestBody,
+            P extends ResponseBody>
+    CompletableFuture<P> sendRetriableRequest(
+            M messageHeaders,
+            U messageParameters,
+            R request,
+            Predicate<Throwable> retryPredicate) {
         return sendRetriableRequest(
                 messageHeaders,
                 messageParameters,
@@ -842,17 +850,17 @@ public class RestClusterClient<T> implements ClusterClient<T> {
     }
 
     private <
-                    M extends MessageHeaders<R, P, U>,
-                    U extends MessageParameters,
-                    R extends RequestBody,
-                    P extends ResponseBody>
-            CompletableFuture<P> sendRetriableRequest(
-                    M messageHeaders,
-                    U messageParameters,
-                    R request,
-                    Collection<FileUpload> filesToUpload,
-                    Predicate<Throwable> retryPredicate,
-                    BiConsumer<String, Throwable> consumer) {
+            M extends MessageHeaders<R, P, U>,
+            U extends MessageParameters,
+            R extends RequestBody,
+            P extends ResponseBody>
+    CompletableFuture<P> sendRetriableRequest(
+            M messageHeaders,
+            U messageParameters,
+            R request,
+            Collection<FileUpload> filesToUpload,
+            Predicate<Throwable> retryPredicate,
+            BiConsumer<String, Throwable> consumer) {
         return retry(
                 () ->
                         getWebMonitorBaseUrl()
@@ -899,10 +907,10 @@ public class RestClusterClient<T> implements ClusterClient<T> {
         return (throwable) ->
                 ExceptionUtils.findThrowable(throwable, java.net.ConnectException.class).isPresent()
                         || ExceptionUtils.findThrowable(
-                                        throwable, java.net.SocketTimeoutException.class)
-                                .isPresent()
+                                throwable, java.net.SocketTimeoutException.class)
+                        .isPresent()
                         || ExceptionUtils.findThrowable(throwable, ConnectTimeoutException.class)
-                                .isPresent()
+                        .isPresent()
                         || ExceptionUtils.findThrowable(throwable, IOException.class).isPresent();
     }
 
@@ -932,7 +940,7 @@ public class RestClusterClient<T> implements ClusterClient<T> {
                         TimeUnit.MILLISECONDS)
                 .thenApplyAsync(
                         leaderAddressSessionId -> {
-                            final String url = leaderAddressSessionId.f0;
+                            final String url = ipv6Url(leaderAddressSessionId.f0);
                             try {
                                 return new URL(url);
                             } catch (MalformedURLException e) {
@@ -941,5 +949,27 @@ public class RestClusterClient<T> implements ClusterClient<T> {
                             }
                         },
                         executorService);
+    }
+
+    private static String ipv6Url(String url) {
+        Pattern pattern = Pattern.compile("http://(.*?):(\\d+)$");
+        Matcher matcher = pattern.matcher(url);
+        if (matcher.find()) {
+            String host = matcher.group(1);
+            int port = Integer.parseInt(matcher.group(2));
+            InetAddress address = null;
+            try {
+                address = InetAddress.getByName(host);
+            } catch (UnknownHostException e) {
+                throw new RuntimeException("unknown host: " + host, e);
+            }
+            if (address instanceof Inet6Address) {
+                host = "[" + host + "]";
+            }
+            String hostPort = "http://" + host + ":" + port;
+            return hostPort;
+        } else {
+            return url;
+        }
     }
 }
