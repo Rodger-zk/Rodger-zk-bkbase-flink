@@ -964,7 +964,7 @@ public class RestClusterClient<T> implements ClusterClient<T> {
                 throw new RuntimeException("unknown host: " + host, e);
             }
             if (address instanceof Inet6Address) {
-                host = "[" + host + "]";
+                host = "[" + address.getHostAddress() + "]";
             }
             String hostPort = "http://" + host + ":" + port;
             return hostPort;
