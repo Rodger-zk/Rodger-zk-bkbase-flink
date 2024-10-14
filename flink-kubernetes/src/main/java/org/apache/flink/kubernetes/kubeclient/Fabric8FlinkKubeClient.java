@@ -214,6 +214,7 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
                 List<KubernetesPod> podList =
                         getPodsWithLabels(KubernetesUtils.getJobManagerSelectors(clusterId));
                 if (!podList.isEmpty()
+                        && podList.get(0).getInternalResource().getStatus().getPodIP() != null
                         && podList.get(0).getInternalResource().getStatus().getHostIP() != null) {
                     return getRestEndPointFromPod(podList.get(0));
                 }

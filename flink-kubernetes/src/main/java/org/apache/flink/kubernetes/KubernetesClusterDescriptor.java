@@ -274,8 +274,8 @@ public class KubernetesClusterDescriptor implements ClusterDescriptor<String> {
         } catch (Exception e) {
             try {
                 LOG.warn(
-                        "Failed to create the Kubernetes cluster \"{}\", try to clean up the residual resources.",
-                        clusterId);
+                        String.format("Failed to create the Kubernetes cluster \"%s\", try to clean up the residual resources.", clusterId),
+                        e);
                 client.stopAndCleanupCluster(clusterId);
             } catch (Exception e1) {
                 LOG.info(
