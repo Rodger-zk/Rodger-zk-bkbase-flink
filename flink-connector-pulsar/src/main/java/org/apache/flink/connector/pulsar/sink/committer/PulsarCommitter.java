@@ -25,6 +25,9 @@ import org.apache.flink.connector.pulsar.sink.PulsarSink;
 import org.apache.flink.connector.pulsar.sink.config.SinkConfiguration;
 import org.apache.flink.util.FlinkRuntimeException;
 
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.AbstractFlinkStreamingCheckpointManager;
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.CheckpointValue.OutputCheckpoint;
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.types.AbstractCheckpointKey;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.transaction.TransactionCoordinatorClient;
@@ -40,6 +43,7 @@ import org.slf4j.LoggerFactory;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Map;
 
 import static org.apache.flink.connector.pulsar.common.config.PulsarClientFactory.createClient;
 import static org.apache.flink.connector.pulsar.common.utils.PulsarTransactionUtils.getTcClient;
@@ -59,9 +63,14 @@ public class PulsarCommitter implements Committer<PulsarCommittable>, Closeable 
 
     private PulsarClient pulsarClient;
     private TransactionCoordinatorClient coordinatorClient;
+    private final AbstractFlinkStreamingCheckpointManager checkpointManager;
 
-    public PulsarCommitter(SinkConfiguration sinkConfiguration) {
+    public PulsarCommitter(
+            SinkConfiguration sinkConfiguration,
+            AbstractFlinkStreamingCheckpointManager checkpointManager) {
         this.sinkConfiguration = checkNotNull(sinkConfiguration);
+        this.checkpointManager = checkNotNull(checkpointManager);
+        this.checkpointManager.open();
     }
 
     @Override
@@ -74,10 +83,17 @@ public class PulsarCommitter implements Committer<PulsarCommittable>, Closeable 
             PulsarCommittable committable = request.getCommittable();
             TxnID txnID = committable.getTxnID();
             String topic = committable.getTopic();
+            Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo =
+                    committable.getCheckpointInfo();
 
-            LOG.debug("Start committing the Pulsar transaction {} for topic {}", txnID, topic);
+            LOG.debug(
+                    "Start committing the Pulsar transaction {} for topic {}, and checkpoint info {}",
+                    txnID,
+                    topic,
+                    checkpointInfo);
             try {
                 client.commit(txnID);
+                checkpointInfo.forEach(checkpointManager::savePoint);
             } catch (CoordinatorNotFoundException e) {
                 LOG.error(
                         "We couldn't find the Transaction Coordinator from Pulsar broker {}. "

@@ -38,6 +38,7 @@ import org.apache.flink.connector.pulsar.sink.writer.serializer.PulsarSerializat
 import org.apache.flink.connector.pulsar.sink.writer.topic.MetadataListener;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.AbstractFlinkStreamingCheckpointManager;
 import org.apache.pulsar.client.api.PulsarClientException;
 
 import javax.annotation.Nullable;
@@ -90,6 +91,8 @@ public class PulsarSink<IN> implements TwoPhaseCommittingSink<IN, PulsarCommitta
     private final TopicRouter<IN> topicRouter;
     private final MessageDelayer<IN> messageDelayer;
     private final PulsarCrypto pulsarCrypto;
+    private final AbstractFlinkStreamingCheckpointManager checkpointManager;
+    private final Boolean isOffset;
 
     PulsarSink(
             SinkConfiguration sinkConfiguration,
@@ -98,10 +101,14 @@ public class PulsarSink<IN> implements TwoPhaseCommittingSink<IN, PulsarCommitta
             TopicRoutingMode topicRoutingMode,
             @Nullable TopicRouter<IN> topicRouter,
             MessageDelayer<IN> messageDelayer,
-            PulsarCrypto pulsarCrypto) {
+            PulsarCrypto pulsarCrypto,
+            AbstractFlinkStreamingCheckpointManager checkpointManager,
+            Boolean isOffset) {
         this.sinkConfiguration = checkNotNull(sinkConfiguration);
         this.serializationSchema = checkNotNull(serializationSchema);
         this.metadataListener = checkNotNull(metadataListener);
+        this.checkpointManager = checkNotNull(checkpointManager);
+        this.isOffset = isOffset;
 
         // Create topic router supplier.
         checkNotNull(topicRoutingMode);
@@ -138,13 +145,15 @@ public class PulsarSink<IN> implements TwoPhaseCommittingSink<IN, PulsarCommitta
                 topicRouter,
                 messageDelayer,
                 pulsarCrypto,
-                initContext);
+                initContext,
+                checkpointManager,
+                isOffset);
     }
 
     @Internal
     @Override
     public Committer<PulsarCommittable> createCommitter() {
-        return new PulsarCommitter(sinkConfiguration);
+        return new PulsarCommitter(sinkConfiguration, checkpointManager);
     }
 
     @Internal

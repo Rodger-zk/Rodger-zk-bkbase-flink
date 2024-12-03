@@ -35,6 +35,7 @@ import org.apache.flink.connector.pulsar.sink.writer.serializer.PulsarSerializat
 import org.apache.flink.connector.pulsar.sink.writer.serializer.PulsarSerializationSchemaWrapper;
 import org.apache.flink.connector.pulsar.sink.writer.topic.MetadataListener;
 
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.AbstractFlinkStreamingCheckpointManager;
 import org.apache.pulsar.client.api.ProducerCryptoFailureAction;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.common.schema.KeyValue;
@@ -112,6 +113,8 @@ public class PulsarSinkBuilder<IN> {
     private TopicRouter<IN> topicRouter;
     private MessageDelayer<IN> messageDelayer;
     private PulsarCrypto pulsarCrypto;
+    private AbstractFlinkStreamingCheckpointManager checkpointManager;
+    private Boolean isOffset;
 
     // private builder constructor.
     PulsarSinkBuilder() {
@@ -216,6 +219,17 @@ public class PulsarSinkBuilder<IN> {
         }
         this.topicRoutingMode = TopicRoutingMode.CUSTOM;
         this.topicRouter = checkNotNull(topicRouter, "topicRouter");
+        return this;
+    }
+
+    public PulsarSinkBuilder<IN> setCheckpointManager(
+            AbstractFlinkStreamingCheckpointManager checkpointManager) {
+        this.checkpointManager = checkpointManager;
+        return this;
+    }
+
+    public PulsarSinkBuilder<IN> setOffset(Boolean offset) {
+        this.isOffset = offset;
         return this;
     }
 
@@ -483,7 +497,9 @@ public class PulsarSinkBuilder<IN> {
                 topicRoutingMode,
                 topicRouter,
                 messageDelayer,
-                pulsarCrypto);
+                pulsarCrypto,
+                checkpointManager,
+                isOffset);
     }
 
     // ------------- private helpers  --------------

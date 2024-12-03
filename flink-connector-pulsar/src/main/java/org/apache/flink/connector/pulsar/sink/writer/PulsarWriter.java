@@ -40,6 +40,12 @@ import org.apache.flink.connector.pulsar.source.enumerator.topic.TopicPartition;
 import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
 import org.apache.flink.util.FlinkRuntimeException;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.type.TypeReference;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.AbstractFlinkStreamingCheckpointManager;
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.CheckpointValue.OutputCheckpoint;
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.types.AbstractCheckpointKey;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
@@ -51,9 +57,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static java.util.Collections.emptyList;
@@ -70,6 +78,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class PulsarWriter<IN> implements PrecommittingSinkWriter<IN, PulsarCommittable> {
     private static final Logger LOG = LoggerFactory.getLogger(PulsarWriter.class);
 
+    private static final long DEFAULT_CHECK_INTERVAL_MS = 1000L;
+
     private final PulsarSerializationSchema<IN> serializationSchema;
     private final MetadataListener metadataListener;
     private final TopicRouter<IN> topicRouter;
@@ -79,6 +89,13 @@ public class PulsarWriter<IN> implements PrecommittingSinkWriter<IN, PulsarCommi
     private final ProducerRegister producerRegister;
     private final MailboxExecutor mailboxExecutor;
     private final AtomicLong pendingMessages;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AbstractFlinkStreamingCheckpointManager checkpointManager;
+    private final Boolean isOffset;
+    private Map<AbstractCheckpointKey, OutputCheckpoint> windowSinkingCheckpoint;
+    private long lastSendTime;
+    private final ProcessingTimeService processingTimeService;
 
     /**
      * Constructor creating a Pulsar writer.
@@ -101,13 +118,17 @@ public class PulsarWriter<IN> implements PrecommittingSinkWriter<IN, PulsarCommi
             TopicRouter<IN> topicRouter,
             MessageDelayer<IN> messageDelayer,
             PulsarCrypto pulsarCrypto,
-            InitContext initContext)
+            InitContext initContext,
+            AbstractFlinkStreamingCheckpointManager checkpointManager,
+            Boolean isOffset)
             throws PulsarClientException {
         checkNotNull(sinkConfiguration);
         this.serializationSchema = checkNotNull(serializationSchema);
         this.metadataListener = checkNotNull(metadataListener);
         this.topicRouter = checkNotNull(topicRouter);
         this.messageDelayer = checkNotNull(messageDelayer);
+        this.checkpointManager = checkNotNull(checkpointManager);
+        this.isOffset = isOffset;
         checkNotNull(initContext);
 
         this.deliveryGuarantee = sinkConfiguration.getDeliveryGuarantee();
@@ -118,6 +139,7 @@ public class PulsarWriter<IN> implements PrecommittingSinkWriter<IN, PulsarCommi
         LOG.debug("Initialize topic metadata after creating Pulsar writer.");
         ProcessingTimeService timeService = initContext.getProcessingTimeService();
         this.metadataListener.open(sinkConfiguration, timeService);
+        this.processingTimeService = timeService;
 
         // Initialize topic router.
         this.topicRouter.open(sinkConfiguration);
@@ -136,6 +158,18 @@ public class PulsarWriter<IN> implements PrecommittingSinkWriter<IN, PulsarCommi
         this.producerRegister = new ProducerRegister(sinkConfiguration, pulsarCrypto, metricGroup);
         this.mailboxExecutor = initContext.getMailboxExecutor();
         this.pendingMessages = new AtomicLong(0);
+
+        // Init checkpoint manager
+        this.checkpointManager.open();
+
+        // When using at least once delivery, it's necessary to register a timer to save the
+        // timestamp checkpoint
+        if (deliveryGuarantee == DeliveryGuarantee.AT_LEAST_ONCE && !isOffset) {
+            long currentProcessingTime = processingTimeService.getCurrentProcessingTime();
+            long tiggerTime = currentProcessingTime + DEFAULT_CHECK_INTERVAL_MS;
+            processingTimeService.registerTimer(tiggerTime, time -> saveCheckpointForWindowEnd());
+            lastSendTime = this.processingTimeService.getCurrentProcessingTime();
+        }
     }
 
     @Override
@@ -150,6 +184,23 @@ public class PulsarWriter<IN> implements PrecommittingSinkWriter<IN, PulsarCommi
 
         // Create message builder for sending messages.
         TypedMessageBuilder<?> builder = createMessageBuilder(topic, context, message);
+
+        if (deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
+            String checkpointInfoStr = message.getProperties().get("checkpointInfo");
+            HashMap<String, String> tmpCheckpointInfo =
+                    objectMapper.readValue(
+                            checkpointInfoStr, new TypeReference<HashMap<String, String>>() {});
+            Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo = new HashMap<>();
+            tmpCheckpointInfo.forEach(
+                    (keyStr, valueStr) -> {
+                        AbstractCheckpointKey checkpointKey =
+                                AbstractCheckpointKey.fromString(keyStr);
+                        OutputCheckpoint outputCheckpoint =
+                                OutputCheckpoint.buildFromDbStr(valueStr);
+                        checkpointInfo.put(checkpointKey, outputCheckpoint);
+                    });
+            producerRegister.updateCheckpointInfo(checkpointInfo);
+        }
 
         // Message Delay delivery.
         long deliverAt = messageDelayer.deliverAt(element, sinkContext);
@@ -177,6 +228,55 @@ public class PulsarWriter<IN> implements PrecommittingSinkWriter<IN, PulsarCommi
                         }
                     });
         }
+
+        // At least once, save checkpoint to redis
+        if (deliveryGuarantee == DeliveryGuarantee.AT_LEAST_ONCE) {
+            // Get checkpoint info
+            String checkpointInfoStr = message.getProperties().get("checkpointInfo");
+            HashMap<String, String> tmpCheckpointInfo =
+                    objectMapper.readValue(
+                            checkpointInfoStr, new TypeReference<HashMap<String, String>>() {});
+            Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo = new HashMap<>();
+            tmpCheckpointInfo.forEach(
+                    (keyStr, valueStr) -> {
+                        AbstractCheckpointKey checkpointKey =
+                                AbstractCheckpointKey.fromString(keyStr);
+                        OutputCheckpoint outputCheckpoint =
+                                OutputCheckpoint.buildFromDbStr(valueStr);
+                        checkpointInfo.put(checkpointKey, outputCheckpoint);
+                    });
+            checkpointInfo.forEach(
+                    (checkpointKey, checkpointValue) -> {
+                        if (!this.isOffset) {
+                            checkpointValue = checkpointValue.subtraction(1);
+                            if (null == windowSinkingCheckpoint) {
+                                windowSinkingCheckpoint = new ConcurrentHashMap<>();
+                            }
+                            windowSinkingCheckpoint.put(checkpointKey, checkpointValue);
+                        }
+                        this.checkpointManager.savePoint(checkpointKey, checkpointValue);
+                    });
+            lastSendTime = this.processingTimeService.getCurrentProcessingTime();
+        }
+    }
+
+    /**
+     * When using at least once, determine the completion of writing output data by checking if no
+     * data has been written for one second.
+     */
+    private void saveCheckpointForWindowEnd() {
+        long currentProcessingTime = this.processingTimeService.getCurrentProcessingTime();
+        boolean isTime = lastSendTime < currentProcessingTime - DEFAULT_CHECK_INTERVAL_MS;
+        if (isTime && null != windowSinkingCheckpoint) {
+            windowSinkingCheckpoint.forEach(
+                    (checkpointKey, checkpointValue) -> {
+                        checkpointManager.savePoint(checkpointKey, checkpointValue.subtraction(-1));
+                    });
+            windowSinkingCheckpoint.clear();
+        }
+        long triggerTime =
+                this.processingTimeService.getCurrentProcessingTime() + DEFAULT_CHECK_INTERVAL_MS;
+        processingTimeService.registerTimer(triggerTime, time -> saveCheckpointForWindowEnd());
     }
 
     private void throwSendingException(String topic, Throwable ex) {

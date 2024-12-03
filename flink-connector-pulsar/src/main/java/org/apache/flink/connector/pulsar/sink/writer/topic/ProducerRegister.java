@@ -29,6 +29,8 @@ import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
 import org.apache.flink.util.FlinkRuntimeException;
 
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.CheckpointValue.OutputCheckpoint;
+import com.tencent.bk.base.dataflow.flink.streaming.checkpoint.types.AbstractCheckpointKey;
 import org.apache.pulsar.client.api.CryptoKeyReader;
 import org.apache.pulsar.client.api.MessageCrypto;
 import org.apache.pulsar.client.api.Producer;
@@ -59,6 +61,8 @@ import javax.annotation.Nullable;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -107,6 +111,7 @@ public class ProducerRegister implements Closeable {
     private final Map<String, Schema<byte[]>> schemas;
     private final Map<String, Map<SchemaHash, Producer<?>>> producers;
     private final Map<String, Transaction> transactions;
+    private final Map<AbstractCheckpointKey, OutputCheckpoint> checkpointInfo;
 
     public ProducerRegister(
             SinkConfiguration sinkConfiguration,
@@ -120,6 +125,7 @@ public class ProducerRegister implements Closeable {
         this.schemas = new HashMap<>();
         this.producers = new HashMap<>();
         this.transactions = new HashMap<>();
+        this.checkpointInfo = new HashMap<>();
 
         if (sinkConfiguration.isEnableMetrics()) {
             metricGroup.setCurrentSendTimeGauge(this::currentSendTimeGauge);
@@ -131,6 +137,20 @@ public class ProducerRegister implements Closeable {
         } else {
             this.coordinatorClient = null;
         }
+    }
+
+    public void updateCheckpointInfo(
+            Map<AbstractCheckpointKey, OutputCheckpoint> newCheckpointInfo) {
+        newCheckpointInfo.forEach(
+                (key, value) -> {
+                    if (checkpointInfo.containsKey(key)) {
+                        checkpointInfo.put(
+                                key,
+                                Collections.max(Arrays.asList(value, checkpointInfo.get(key))));
+                    } else {
+                        checkpointInfo.put(key, value);
+                    }
+                });
     }
 
     /**
@@ -170,10 +190,10 @@ public class ProducerRegister implements Closeable {
             Transaction transaction = entry.getValue();
             TxnID txnID = transaction.getTxnID();
 
-            committables.add(new PulsarCommittable(txnID, topic));
+            committables.add(new PulsarCommittable(txnID, topic, checkpointInfo));
         }
         transactions.clear();
-
+        checkpointInfo.clear();
         return committables;
     }
 
@@ -318,6 +338,7 @@ public class ProducerRegister implements Closeable {
             }
 
             transactions.clear();
+            checkpointInfo.clear();
         } catch (IOException e) {
             throw new FlinkRuntimeException(e);
         }
